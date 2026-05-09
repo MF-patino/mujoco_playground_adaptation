@@ -25,6 +25,125 @@ def load_env(env_name, impl, breakLeg=False):
 
     return env
 
+
+def interactive_visualization_sequence(env_sequence, controller, time_per_env=15.0):
+    """
+    Opens an interactive MuJoCo viewer and progresses through a sequence of environments.
+    
+    Args:
+        env_sequence: List of tuples [(env_object, "EnvName"), ...]
+        controller: The RobotController instance.
+        time_per_env: How long (in simulation seconds) to spend in each environment.
+    """
+    # Ensure JIT functions exist for all environments in the sequence
+    for env in env_sequence:
+        if not hasattr(env, 'jit_reset'):
+            env.jit_reset = jax.jit(env.reset)
+            env.jit_step = jax.jit(env.step)
+
+    # Setup Initial Environment
+    env_idx = 0
+    current_env = env_sequence[env_idx]
+    controller.setEnv(current_env)
+
+    # Initialize viewer with the first environment's model
+    if hasattr(current_env, 'mj_model'):
+        model = current_env.mj_model
+    else:
+        model = current_env.unwrapped.mj_model
+        
+    data = mujoco.MjData(model)
+    rng = jax.random.PRNGKey(42)  # Fixed seed for reproducibility
+    
+    # Initialize the Simulation State
+    rng, key1 = jax.random.split(rng)
+    state = current_env.jit_reset(key1)
+    
+    env_timer = 0.0
+    control_dt = getattr(current_env, 'dt', model.opt.timestep)
+    
+    print(f"Simulation running at control DT: {control_dt:.4f}s")
+    print(f"Starting in {current_env.name}. Will hot-swap every {time_per_env} seconds.")
+
+    # Launch the viewer
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        
+        viewer.cam.distance = 3.0
+        viewer.cam.lookat[:] =[0, 0, 0.5]
+        
+        while viewer.is_running():
+            # 1. Sequence Hot-Swap Logic
+            if env_timer >= time_per_env:
+                env_idx += 1
+                
+                # Check if we have completed the entire sequence
+                if env_idx >= len(env_sequence):
+                    print("\n--- EXPERIMENT SEQUENCE COMPLETE ---")
+                    break
+                    
+                next_env = env_sequence[env_idx]
+                print(f"\n--- HOT SWAPPING PHYSICS TO {next_env.name} ---")
+                
+                # Create a structurally valid state for the new environment
+                rng, swap_rng = jax.random.split(rng)
+                state2 = next_env.jit_reset(swap_rng)
+
+                safe_qpos = state.data.qpos
+                
+                # 2. Teleport X and Y back to the center of the map
+                safe_qpos = safe_qpos.at[0].set(0.0) # X
+                safe_qpos = safe_qpos.at[1].set(0.0) # Y
+
+                # Inject kinematics! Preserve the robot's physical momentum and posture.
+                new_data = state2.data.replace(
+                    qpos=safe_qpos,
+                    qvel=state.data.qvel,
+                    ctrl=state.data.ctrl,
+                    time=state.data.time
+                )
+                state = state2.replace(
+                    data=new_data,
+                    obs=state.obs,
+                    info=state.info
+                )
+                
+                current_env = next_env
+                controller.setEnv(current_env)
+                env_timer = 0.0  # Reset timer for the next environment
+
+            # 2. Control Loop
+            state.info["command"] = controller.cmd
+            step_start = time.time()
+            rng, act_rng = jax.random.split(rng)
+            
+            # Run Policy
+            action = controller.inference(state.obs, act_rng)[0]
+
+            # Step environment
+            prev_obs = state.obs
+            state = current_env.jit_step(state, action)
+            
+            # Controller online monitoring and adaptation logic
+            controller.control_loop(prev_obs, action, state)
+
+            # 3. Viewer Sync
+            state.data.qpos.block_until_ready()
+            
+            # Extract qpos/qvel to CPU and copy to viewer
+            data.qpos[:] = np.array(state.data.qpos)
+            data.qvel[:] = np.array(state.data.qvel)
+
+            mujoco.mj_forward(model, data)
+            viewer.sync()
+
+            # 4. Timing
+            env_timer += control_dt
+            elapsed = time.time() - step_start
+            
+            # Sleep only the remaining time to match real-time
+            if elapsed < control_dt:
+                time.sleep(control_dt - elapsed)
+
 def interactive_visualization(env, controller=None, resetNum=-1, jit_inference=None):
     """
     Opens an interactive MuJoCo viewer for a JAX-based environment.
@@ -133,26 +252,28 @@ def main():
 
     obs_shape, act_shape = flat_env.observation_size, flat_env.action_size
 
-    cmds = [jp.array([1., 0., 0.]), jp.array([.7, 0., 0.]), jp.array([.4, 0., 0.]), jp.array([.25, 0., 0.])]
+    cmds = [jp.array([0.6, 0., 0.])]#, jp.array([.7, 0., 0.]), jp.array([.4, 0., 0.]), jp.array([.25, 0., 0.])]
+
+
     for cmd in cmds:
         controller = RobotController(obs_shape, act_shape, initial_pair="FlatTerrain", 
                                             generatePlots = False, cmd = cmd)
-
-        interactive_visualization(flat_env, controller=controller, resetNum=1)
-        interactive_visualization(env_broken, controller=controller, resetNum=1)
-        interactive_visualization(flat_env, controller=controller, resetNum=1)
-        interactive_visualization(slippery_env, controller=controller, resetNum=1)
-        interactive_visualization(flat_env, controller=controller, resetNum=1)
-        interactive_visualization(rough_env, controller=controller, resetNum=1)
-        interactive_visualization(flat_env, controller=controller, resetNum=1)
-        interactive_visualization(rough_env, controller=controller, resetNum=1)
-        interactive_visualization(flat_env, controller=controller, resetNum=1)
-        interactive_visualization(slippery_env, controller=controller, resetNum=1)
-        interactive_visualization(rough_env, controller=controller, resetNum=1)
-        interactive_visualization(flat_env, controller=controller, resetNum=1)
-        interactive_visualization(rough_env, controller=controller, resetNum=2)
-        interactive_visualization(slippery_env, controller=controller, resetNum=1)
-        controller.export_history(os.path.join(PLOT_DATA_DIR, f"{cmd}.pkl"))
+        
+        # Define the chronological journey of the robot
+        env_sequence =[
+            flat_env,          # t = 0 to 15s
+            rough_env,        # t = 15s to 30s (Triggers PPO Training!)
+            slippery_env,  # t = 30s to 45s (Triggers GP Search)
+            flat_env           # t = 45s to 60s (Returns home safely)
+        ]
+        
+        # Run the continuous sequence
+        interactive_visualization_sequence(
+            env_sequence=env_sequence, 
+            controller=controller, 
+            time_per_env=15.0 # 15 seconds gives plenty of time for PPO to trigger and stabilize
+        )
+        controller.export_history(os.path.join(PLOT_DATA_DIR, f"adaptSequence.pkl"))
 
 if __name__ == "__main__":
     main()
