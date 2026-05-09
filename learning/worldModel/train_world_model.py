@@ -198,12 +198,3 @@ def trainWM(env_name):
             worse_epochs += 1
     
     return env_name, state, stats
-            
-def main():
-    # All world models are trained from scratch
-    for env in os.listdir(MODELS_ROOT):
-        trainWM(env)
-    
-
-if __name__ == "__main__":
-    main()

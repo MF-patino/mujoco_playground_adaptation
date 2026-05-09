@@ -122,6 +122,9 @@ class RobotController:
             pickle.dump(data, f)
 
     def setEnv(self, env):
+        if not self.deploy:
+            return
+        
         self.env_changes.append((len(self.detector.stat_values), env.name))
         self.env = env
 
