@@ -42,7 +42,7 @@ class KSDriftDetector:
         # If the slightest negative perturbation is detected, check if
         # error distributions are different
         _, p_value = ks_2samp(native_errors, last_errors)
-        if len(last_errors) > 10 and mean_native_error < np.mean(last_errors):
+        if len(last_errors) >= self.hertz/2 and mean_native_error < np.mean(last_errors):
             # Here the KS test requires a high amount of evidence/certainty
             # to declare that the policy is out of its environment AND experiencing
             # instabilities that could lead to the robot falling over

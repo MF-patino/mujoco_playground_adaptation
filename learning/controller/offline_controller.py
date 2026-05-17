@@ -168,6 +168,7 @@ class OfflineRobotController(RobotController):
 
         # Create a new WM error category
         self.errors[pair_name] = []
+        self.smooth_errors[pair_name] = []
 
         # Include models in internal data structures
         self.wms.append(wm_info)
@@ -209,4 +210,6 @@ class OfflineRobotController(RobotController):
         # Re-normalize the new inaffinity matrix to project all points onto the hypersphere
         if len(self.pol_names) > 1:
             self.normalizePolicyEmbeddings()
+
+        self.request_env_reset = True
         

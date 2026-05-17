@@ -21,7 +21,7 @@ def load_env(env_name, impl, breakLeg=False):
 
     env.jit_reset = jax.jit(env.reset)
     env.jit_step = jax.jit(env.step)
-    env.name = env_name if not breakLeg else "ConstrainedKnee_" + env_name
+    env.name = env_name if not breakLeg else "BlockedKnee_" + env_name
 
     return env
 
@@ -53,7 +53,7 @@ def interactive_visualization_sequence(env_sequence, controller, time_per_env=15
         model = current_env.unwrapped.mj_model
         
     data = mujoco.MjData(model)
-    rng = jax.random.PRNGKey(42)  # Fixed seed for reproducibility
+    rng = jax.random.PRNGKey(35)  # Fixed seed for reproducibility
     
     # Initialize the Simulation State
     rng, key1 = jax.random.split(rng)
@@ -125,6 +125,18 @@ def interactive_visualization_sequence(env_sequence, controller, time_per_env=15
             
             # Controller online monitoring and adaptation logic
             controller.control_loop(prev_obs, action, state)
+
+            if getattr(controller, 'request_env_reset', False):
+                # Clear the flag so it only resets once
+                controller.request_env_reset = False
+
+                if state.done:
+                    print("\n>>> Fall after adaptation: Restarting robot to default standing pose...")
+                    
+                    # Get a fresh random key and reset the environment
+                    rng, reset_rng = jax.random.split(rng)
+                    state = current_env.jit_reset(reset_rng)
+                    controller.detector.reset()
 
             # 3. Viewer Sync
             state.data.qpos.block_until_ready()
@@ -256,15 +268,17 @@ def main():
 
 
     for cmd in cmds:
-        controller = RobotController(obs_shape, act_shape, initial_pair="FlatTerrain", 
+        controller = OfflineRobotController(obs_shape, act_shape, initial_pair="FlatTerrain", 
                                             generatePlots = False, cmd = cmd)
         
         # Define the chronological journey of the robot
         env_sequence =[
-            flat_env,          # t = 0 to 15s
-            rough_env,        # t = 15s to 30s (Triggers PPO Training!)
-            slippery_env,  # t = 30s to 45s (Triggers GP Search)
-            flat_env           # t = 45s to 60s (Returns home safely)
+            flat_env,
+            rough_env,
+            slippery_env,
+            slippery_env,
+            rough_env,
+            env_broken
         ]
         
         # Run the continuous sequence
@@ -273,7 +287,7 @@ def main():
             controller=controller, 
             time_per_env=15.0 # 15 seconds gives plenty of time for PPO to trigger and stabilize
         )
-        controller.export_history(os.path.join(PLOT_DATA_DIR, f"adaptSequence.pkl"))
+        controller.export_history(os.path.join(PLOT_DATA_DIR, f"adaptSequence4.pkl"))
 
 if __name__ == "__main__":
     main()
