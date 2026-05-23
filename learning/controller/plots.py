@@ -315,8 +315,6 @@ def plotGaitPattern(controller, env_change = None):
 
 
 def plotGPSearch(controller, gp_states=None):
-    import warnings
-
     # Get the sequence of iterations for the most recent drift
     if gp_states is None:
         gp_states = controller.gp_states[-1]
@@ -332,10 +330,8 @@ def plotGPSearch(controller, gp_states=None):
     # For a small catalog, a small number (e.g., 3 to 5) works perfectly.
     n_neighbors = min(5, len(pol_names_list) - 1)
     
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        reducer = umap.UMAP(n_components=1, n_neighbors=n_neighbors, min_dist=0.1, random_state=42)
-        coords_1d = reducer.fit_transform(emb_matrix).flatten()
+    reducer = umap.UMAP(n_components=1, n_neighbors=n_neighbors, min_dist=0.1, random_state=42)
+    coords_1d = reducer.fit_transform(emb_matrix).flatten()
     
     x_coords = {name: coord for name, coord in zip(pol_names_list, coords_1d)}
     
@@ -344,6 +340,7 @@ def plotGPSearch(controller, gp_states=None):
     unique_base_names = list(set(base_names))
     cmap = cm.get_cmap('tab10', len(unique_base_names))
     domain_colors = {domain: cmap(i) for i, domain in enumerate(unique_base_names)}
+    present_names = []
     
     # Create a subplot grid: N rows, 1 column. 
     fig, axes = plt.subplots(num_iterations, 1, figsize=(12, 3.5 * num_iterations), 
@@ -363,7 +360,11 @@ def plotGPSearch(controller, gp_states=None):
             x_val = x_coords[pol_name]
             
             # Find the belief stored in this specific iteration's polInfo
-            mean, std =[(m, s) for _, m, s, name in polInfo if pol_name == name][0]
+            gp_data = [(m, s) for _, m, s, name in polInfo if pol_name == name]
+            if len(gp_data) == 0:
+                continue
+            
+            mean, std = gp_data[0]
             
             xs.append(float(x_val))
             means.append(float(mean[0]))
@@ -372,6 +373,7 @@ def plotGPSearch(controller, gp_states=None):
             
             # Color based on Target Domain
             base_domain = pol_name.split("_AdaptedFrom_")[0]
+            present_names.append(base_domain)
             colors.append(domain_colors[base_domain])
             
             # Shape/Border based on GP Status
@@ -430,11 +432,11 @@ def plotGPSearch(controller, gp_states=None):
     # --- CUSTOM LEGENDS ---
     # Legend 1: Domains (Colors)
     domain_lines =[Line2D([0], [0], marker='o', color='w', markerfacecolor=domain_colors[d], 
-                           markersize=10, markeredgecolor='gray', label=d) for d in unique_base_names]
+                           markersize=10, markeredgecolor='gray', label=d) for d in list(set(present_names))]
     
     # Legend 2: Status (Shapes)
     status_lines = [
-        Line2D([0], [0], marker='D', color='w', markerfacecolor='white', markeredgecolor='black', markeredgewidth=2.5, markersize=8, label='Base Policy'),
+        Line2D([0], [0], marker='D', color='w', markerfacecolor='white', markeredgecolor='black', markeredgewidth=2.5, markersize=8, label='Sampled Policy'),
         Line2D([0], [0], marker='*', color='w', markerfacecolor='white', markeredgecolor='red', markeredgewidth=2, markersize=14, label='Chosen (UCB)'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='white', markeredgecolor='gray', markeredgewidth=1, markersize=8, label='Other')
     ]
@@ -444,4 +446,267 @@ def plotGPSearch(controller, gp_states=None):
     axes[0].legend(handles=domain_lines + [blank_line] + status_lines, 
                    loc='upper left', bbox_to_anchor=(1.02, 1.05), fontsize=9, framealpha=0.9)
 
+    plt.show()
+
+def plotGPSearchHorizontal(controller, gp_states=None):
+    # Get the sequence of iterations for the most recent drift
+    if gp_states is None:
+        gp_states = controller.gp_states[-1]
+
+    num_iterations = len(gp_states)
+    
+    # 1. Collapse the 4D embeddings to a fixed 1D axis using UMAP
+    # UMAP preserves both local clustering (redundant policies) AND global distances (domains)
+    pol_names_list = list(controller.policy_embeddings.keys())
+    emb_matrix = np.array([controller.policy_embeddings[name] for name in pol_names_list])
+    
+    # n_neighbors dictates how much local vs global structure to preserve. 
+    # For a small catalog, a small number (e.g., 3 to 5) works perfectly.
+    n_neighbors = min(5, len(pol_names_list) - 1)
+    
+    reducer = umap.UMAP(n_components=1, n_neighbors=n_neighbors, min_dist=0.1, random_state=42)
+    coords_1d = reducer.fit_transform(emb_matrix).flatten()
+    
+    x_coords = {name: coord for name, coord in zip(pol_names_list, coords_1d)}
+    
+    # Extract unique domains and create a Colormap
+    base_names = [name.split("_AdaptedFrom_")[0] for name in pol_names_list]
+    unique_base_names = list(set(base_names))
+    cmap = cm.get_cmap('tab10', len(unique_base_names))
+    domain_colors = {domain: cmap(i) for i, domain in enumerate(unique_base_names)}
+    present_names =[]
+    
+    # --- CHANGED: 1 Row, N Columns. Added sharey=True to lock the Y-axis scale ---
+    fig, axes = plt.subplots(1, num_iterations, figsize=(3.0 * num_iterations, 5.5), 
+                             sharex=True, sharey=True, 
+                             gridspec_kw={'wspace': 0.05}, 
+                             layout="constrained")
+    
+    if num_iterations == 1: axes = [axes]
+    else: axes = axes.flatten()
+
+    for ax_idx, (iteration, base_policy_name, chosen_policy_name, polInfo) in enumerate(gp_states):
+        ax = axes[ax_idx]
+
+        xs, means, stds, names = [], [], [],[]
+        colors, markers, mecs, mews, sizes, zorders = [], [],[], [], [],[]
+
+        # 2. Query GP beliefs for all policies in catalog
+        for pol_name in pol_names_list:
+            x_val = x_coords[pol_name]
+            
+            # Find the belief stored in this specific iteration's polInfo
+            gp_data = [(m, s) for _, m, s, name in polInfo if pol_name == name]
+            if len(gp_data) == 0:
+                continue
+            
+            mean, std = gp_data[0]
+            
+            xs.append(float(x_val))
+            means.append(float(mean[0]))
+            stds.append(float(std[0]))
+            names.append(pol_name)
+            
+            # Color based on Target Domain
+            base_domain = pol_name.split("_AdaptedFrom_")[0]
+            present_names.append(base_domain)
+            colors.append(domain_colors[base_domain])
+            
+            # Shape/Border based on GP Status
+            if pol_name == base_policy_name:
+                markers.append('D') # Diamond
+                mecs.append('black'); mews.append(2.5); sizes.append(100); zorders.append(5)
+            elif pol_name == chosen_policy_name:
+                markers.append('*') # Star
+                mecs.append('red'); mews.append(2.0); sizes.append(300); zorders.append(6)
+            else:
+                markers.append('o') # Circle
+                mecs.append('gray'); mews.append(1.0); sizes.append(60); zorders.append(3)
+
+        # Sort everything by the 1D X-coordinate
+        sorted_indices = np.argsort(xs)
+        xs, means, stds = np.array(xs)[sorted_indices], np.array(means)[sorted_indices], np.array(stds)[sorted_indices]
+        names = [names[i] for i in sorted_indices]
+        colors = [colors[i] for i in sorted_indices]
+        markers = [markers[i] for i in sorted_indices]
+        mecs = [mecs[i] for i in sorted_indices]
+        mews = [mews[i] for i in sorted_indices]
+        sizes =[sizes[i] for i in sorted_indices]
+        zorders = [zorders[i] for i in sorted_indices]
+
+        # 3. Plot the GP's uncertainty bound (Mean ± Std)
+        ax.plot(xs, means, color='blue', alpha=0.4, linestyle='--', zorder=1)
+        ax.fill_between(xs, means - stds, means + stds, color='blue', alpha=0.1, zorder=0)
+
+        # Scatter the policies individually so we can apply specific markers
+        y_offset = 15
+        for i in range(len(xs)):
+            ax.errorbar(xs[i], means[i], yerr=stds[i], fmt=markers[i], 
+                        ecolor='gray', elinewidth=1.5, capsize=3, # Error bar style
+                        markerfacecolor=colors[i], markeredgecolor=mecs[i], 
+                        markeredgewidth=mews[i], markersize=np.sqrt(sizes[i]), zorder=zorders[i])
+            
+            # Annotate only the Base and Chosen policies to prevent massive text overlap
+            if markers[i] in ['D', '*']:
+                
+                ax.annotate(names[i], (xs[i], means[i]), xytext=(0, y_offset), 
+                            textcoords='offset points', ha='center', fontsize=8, fontweight='bold',
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=mecs[i], alpha=0.4), 
+                            zorder=10, 
+                            in_layout=False)
+                y_offset = 45
+
+        # Formatting
+        ax.set_title(f"Iteration {iteration}", fontsize=12, fontweight='bold')
+        ax.grid(True, linestyle='--', alpha=0.3)
+        
+        # Add extra margins so annotations don't clip off the left/right sides
+        ax.margins(x=0.15, y=0.2)
+
+    # --- CHANGED: Global X and Y axis labels ---
+    fig.supxlabel("1D UMAP Projection of Latent Policy Space", fontsize=14)
+    fig.supylabel("Predicted Error (GP Mean)", fontsize=14)
+
+    # --- CUSTOM LEGENDS ---
+    domain_lines =[Line2D([0], [0], marker='o', color='w', markerfacecolor=domain_colors[d], 
+                           markersize=10, markeredgecolor='gray', label=d) for d in list(set(present_names))]
+    
+    status_lines = [
+        Line2D([0], [0], marker='D', color='w', markerfacecolor='white', markeredgecolor='black', markeredgewidth=2.5, markersize=8, label='Sampled Policy'),
+        Line2D([0], [0], marker='*', color='w', markerfacecolor='white', markeredgecolor='red', markeredgewidth=2, markersize=14, label='Chosen (UCB)'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='white', markeredgecolor='gray', markeredgewidth=1, markersize=8, label='Other')
+    ]
+    
+    blank_line = Line2D([0], [0], color='w', label=' ')
+
+    # --- CHANGED: Attach the legend to the LAST subplot (axes[-1]) so it goes on the far right ---
+    axes[-1].legend(handles=domain_lines + [blank_line] + status_lines, 
+                    loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=9, framealpha=0.9)
+
+    plt.show()
+    
+def statisticDriftHistory(controller, pre_steps=225):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from matplotlib.lines import Line2D
+
+    stat_values = np.array(controller.detector.stat_values)
+    p_values    = np.array(controller.detector.p_values)
+    drift_indices = controller.drift_indices
+    num_drifts = len(drift_indices)
+
+    P_VALUE_THRESHOLD = 1e-4
+
+    # ── Fallback: no drifts ────────────────────────────────────────────────────
+    if num_drifts == 0:
+        print("No drifts detected to plot.")
+        fig, ax1 = plt.subplots(figsize=(8, 4))
+        ax1.plot(np.arange(len(stat_values)) / 50.0, stat_values,
+                 color='#1f77b4', label="KS statistic")
+        ax2 = ax1.twinx()
+        ax2.semilogy(np.arange(len(p_values)) / 50.0, p_values,
+                     color='#ff7f0e', alpha=0.7, label="p-value")
+        ax2.axhline(P_VALUE_THRESHOLD, color='#ff7f0e', linestyle=':', linewidth=1.5)
+        ax1.set_xlabel("Absolute Time (Seconds)")
+        ax1.set_title("KS-ADWIN history (No drifts)")
+        plt.show()
+        return
+
+    # ── Main figure ────────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, num_drifts,
+                             figsize=(4.5 * num_drifts, 4),
+                             sharey=True, layout="constrained")
+    if num_drifts == 1:
+        axes = [axes]
+
+    twin_axes = []
+    plotted_env_change = False
+
+    for i, drift_idx in enumerate(drift_indices):
+        ax1 = axes[i]
+
+        # ── Slice bounds ───────────────────────────────────────────────────────
+        for change_step, env_name in controller.env_changes[::-1]:
+            if change_step < drift_idx:
+                change_idx = change_step
+                break
+        start_idx = max(0, change_idx - pre_steps)
+        end_idx   = drift_idx + 10
+
+        x_abs = np.arange(start_idx, end_idx) / 50.0
+        y_ks  = stat_values[start_idx:end_idx]
+        y_p   = p_values[start_idx:end_idx]
+
+        # ── Left axis: KS statistic ────────────────────────────────────────────
+        ax1.plot(x_abs, y_ks, color='#1f77b4', linewidth=2,
+                 label='KS statistic' if i == 0 else "")
+        ax1.fill_between(x_abs, y_ks, color='#1f77b4', alpha=0.15)
+
+        # FIX 1: sharey hides labels on non-first axes — re-enable explicitly
+        ax1.tick_params(axis='y', labelleft=True, labelcolor='#1f77b4')
+
+        # ── Right axis: p-values (log scale) ──────────────────────────────────
+        ax2 = ax1.twinx()
+        twin_axes.append(ax2)
+
+        ax2.fill_between(x_abs, y_p, P_VALUE_THRESHOLD,
+                         where=(y_p < P_VALUE_THRESHOLD),
+                         color='#ff7f0e', alpha=0.25, interpolate=True)
+        ax2.semilogy(x_abs, y_p, color='#ff7f0e', linewidth=1.5, alpha=0.85,
+                     label='p-value' if i == 0 else "")
+        ax2.axhline(P_VALUE_THRESHOLD, color='#ff7f0e', linestyle=':',
+                    linewidth=1.5, alpha=0.9,
+                    label=f'Alert threshold (p={P_VALUE_THRESHOLD:.0e})' if i == 0 else "")
+
+        if i == num_drifts - 1:
+            ax2.set_ylabel("Policy Performance p-value (log)", fontsize=11,
+                           color='#ff7f0e')
+        ax2.tick_params(axis='y', labelcolor='#ff7f0e')
+
+        # ── Domain change verticals ────────────────────────────────────────────
+        for change_step, env_name in controller.env_changes:
+            if start_idx <= change_step <= end_idx:
+                change_time = change_step / 50.0
+                # Draw on ax2 so it sits above the orange fill
+                ax2.axvline(change_time, color='green', linestyle=':', linewidth=2.5, zorder=4)
+                ax1.text(change_time - 0.05, 0.95, f" {env_name}",
+                         color='green', rotation=90, va='top', ha='right',
+                         fontsize=9, fontweight='bold', alpha=0.8,
+                         transform=ax1.get_xaxis_transform(), zorder=5)
+                plotted_env_change = True
+
+        # FIX 2: draw red line on ax2 (the top layer) so the orange fill can't bury it
+        drift_time = drift_idx / 50.0
+        ax2.axvline(drift_time, color='red', linestyle='--', linewidth=2.5, zorder=5,
+                    label='Drift Triggered' if i == 0 else "")
+
+        # ── Formatting ─────────────────────────────────────────────────────────
+        ax1.set_title(f"Drift Event {i+1} (t = {drift_time:.2f}s)",
+                      fontsize=12, fontweight='bold')
+        ax1.grid(True, linestyle='--', alpha=0.4)
+        ax1.margins(x=0)
+
+    # ── Sync all right-axes to the same log-scale limits ──────────────────────
+    all_p_mins = [ax.get_ylim()[0] for ax in twin_axes]
+    all_p_maxs = [ax.get_ylim()[1] for ax in twin_axes]
+    shared_ylim = (min(all_p_mins), max(all_p_maxs))
+    for ax in twin_axes:
+        ax.set_ylim(shared_ylim)
+
+    # ── Global labels ──────────────────────────────────────────────────────────
+    axes[0].set_ylabel("KS Statistic", fontsize=12, color='#1f77b4')
+    fig.supxlabel("Simulation Time (Seconds)", fontsize=12)
+
+    # ── Legend (merge left + right axis handles from first subplot) ───────────
+    h1, l1 = axes[0].get_legend_handles_labels()
+    h2, l2 = twin_axes[0].get_legend_handles_labels()
+    if plotted_env_change:
+        h1.append(Line2D([0], [0], color='green', linestyle=':', linewidth=2.5))
+        l1.append('Physical Domain Change')
+    all_handles = h1 + h2
+    all_labels  = l1 + l2
+    if all_handles:
+        axes[-1].legend(all_handles, all_labels,
+                        loc='upper left', bbox_to_anchor=(1.12, 1.0),
+                        fontsize=10, framealpha=0.9)
     plt.show()
