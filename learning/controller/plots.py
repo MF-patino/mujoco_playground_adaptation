@@ -107,6 +107,8 @@ def policyEmbeddings2D(controller):
     plt.show()
 
 def policyEmbeddings3D(controller):
+    import re # Para extraer los índices numéricos de las políticas
+
     print("Generating 3D Latent Space Sphere Plot...")
 
     # Reduce the raw inaffinity matrix strictly to 3D
@@ -130,12 +132,57 @@ def policyEmbeddings3D(controller):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
     
-    # Get a distinct colormap for the policies
-    # Extract unique base domains (target domains) from the policy names
+    # --- ASIGNACIÓN DE COLORES POR DOMINIO ---
     base_names = [name.split("_AdaptedFrom_")[0] for name in controller.pol_names]
     unique_base_names = list(set(base_names))
     cmap = cm.get_cmap('tab10', len(unique_base_names))
     domain_colors = {domain: cmap(i) for i, domain in enumerate(unique_base_names)}
+
+    # --- ASIGNACIÓN DE FORMAS DENTRO DE CADA DOMINIO ---
+    # Agrupamos las políticas que comparten el mismo dominio base
+    policies_by_domain = {}
+    for pol_name in controller.pol_names:
+        base_name = pol_name.split("_AdaptedFrom_")[0]
+        if base_name not in policies_by_domain:
+            policies_by_domain[base_name] = []
+        policies_by_domain[base_name].append(pol_name)
+    
+    # Secuencia de marcadores para las redundancias (empezando con círculo 'o')
+    shape_cycle = ['o', '^', 's', 'D', '*', 'p', 'P', 'X', 'h', 'v', '<', '>']
+    policy_shapes = {}
+    for base_name, pol_list in policies_by_domain.items():
+        # Las ordenamos alfabéticamente para que las formas sean consistentes en cada ejecución
+        pol_list_sorted = sorted(pol_list)
+        for idx, pol_name in enumerate(pol_list_sorted):
+            shape_idx = idx % len(shape_cycle)
+            policy_shapes[pol_name] = shape_cycle[shape_idx]
+
+    # --- FORMATEADOR LATEX PARA LA TESIS ---
+    def format_thesis_label(raw_name):
+        def clean_part(part):
+            part_lower = part.lower()
+            if "flat" in part_lower:
+                return "flat"
+            elif "rough" in part_lower:
+                return "rough"
+            elif "slippery" in part_lower:
+                return "slippery"
+            elif "blocked" in part_lower or "broken" in part_lower or "knee" in part_lower:
+                return "blocked"
+            return part
+
+        # Extrae de forma segura el índice final (ej: "_1", "_1_4") si existe
+        suffix_match = re.search(r'_(\d+(?:_\d+)?)$', raw_name)
+        suffix = f"^{{({suffix_match.group(1).replace('_', '-')})}}" if suffix_match else ""
+
+        if "_AdaptedFrom_" in raw_name:
+            parts = raw_name.split("_AdaptedFrom_")
+            target = clean_part(parts[0])
+            original = clean_part(parts[1])
+            return f"$\\pi_{{{target}, {original}}}{suffix}$"
+        else:
+            target = clean_part(raw_name)
+            return f"$\\pi_{{{target}}}{suffix}$"
 
     # Draw the translucent 3D Unit Sphere
     u = np.linspace(0, 2 * np.pi, 60)
@@ -144,7 +191,6 @@ def policyEmbeddings3D(controller):
     y_sphere = np.outer(np.sin(u), np.sin(v))
     z_sphere = np.outer(np.ones(np.size(u)), np.cos(v))
     
-    # Plot surface and wireframe for depth perception
     ax.plot_surface(x_sphere, y_sphere, z_sphere, color='whitesmoke', alpha=0.15, edgecolor='none')
     ax.plot_wireframe(x_sphere, y_sphere, z_sphere, color='gray', alpha=0.1, linewidth=0.5)
 
@@ -154,11 +200,15 @@ def policyEmbeddings3D(controller):
         base_name = env_name.split("_AdaptedFrom_")[0]
         c = domain_colors[base_name]
         
-        # Draw the point on the sphere surface
-        ax.scatter(x, y, z, color=c, s=150, edgecolor='black', depthshade=True, label=env_name)
+        # Obtenemos el marcador correspondiente para esta redundancia
+        shape = policy_shapes[env_name]
+        
+        # Draw the point on the sphere surface using its unique shape
+        ax.scatter(x, y, z, color=c, marker=shape, s=150, edgecolor='black', depthshade=True)
         
         # Draw a faint line from the origin to the point (shows the vector)
         ax.plot([0, x], [0, y], [0, z], color=c, linestyle='--', alpha=0.6, linewidth=1.5)
+
 
     # Formatting
     # Draw origin axes
@@ -177,24 +227,19 @@ def policyEmbeddings3D(controller):
     ax.set_zlabel("Principal Component 3", labelpad=10)
     plt.title("Latent Policy Space (3D SVD Projection on Unit Sphere)", fontsize=14, pad=20)
     
-    # Legend outside the plot
-    plt.legend(loc='upper left', bbox_to_anchor=(1.05, 1), title="Policies")
+    # --- CONSTRUCCIÓN DE LEYENDA INDIVIDUAL CON MARCADORES ---
+    # Creamos un elemento de leyenda para cada política combinando su forma, color y etiqueta matemática
+    legend_elements = [
+        Line2D([0], [0], marker=policy_shapes[name], color='w', markerfacecolor=domain_colors[name.split("_AdaptedFrom_")[0]], 
+               markersize=10, markeredgecolor='black', label=format_thesis_label(name))
+        for name in sorted(controller.pol_names)
+    ]
+    
+    # Renderizamos la leyenda en el lateral derecho de la figura con el tamaño de letra correcto
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.05, 1), 
+              title="Policies", title_fontsize=13, fontsize=12, framealpha=0.9)
     plt.tight_layout()
     
-    plt.show()
-
-def statisticDriftHistory(controller):
-    plt.plot(controller.detector.stat_values, label="KS statistic")
-
-    plt.vlines(controller.drift_indices,
-        ymin=min(controller.detector.stat_values),
-        ymax=max(controller.detector.stat_values),
-        color="red", alpha=0.6, label='Drift detection')
-
-    plt.xlabel("Time step")
-    plt.title("KS-ADWIN concept drift detector history")
-    plt.legend()
-    plt.tight_layout()
     plt.show()
 
 def wmErrorHistory(controller, env_change = None):
@@ -223,15 +268,20 @@ def wmErrorHistory(controller, env_change = None):
     plt.title("WM error history")
     plt.tight_layout()
     plt.show()
-
 def plotGaitPattern(controller, env_change = None):
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    import numpy as np
+
     if env_change is None:
         env_change = controller.env_changes[-1]
 
     extra_steps = 250
     last_env_change, env_name = env_change
-    start_step = max(last_env_change - extra_steps, 0)
-    end_step = last_env_change + extra_steps
+    start_step = max(last_env_change - 125, 0)
+    end_step = last_env_change + extra_steps + 125
 
     print("Generating Gait Pattern Plot...")
 
@@ -243,72 +293,119 @@ def plotGaitPattern(controller, env_change = None):
     
     fig, ax = plt.subplots(figsize=(14, 4))
     
-    # 1. Plot the foot contacts
+    # 1. Plot the foot contacts (Converted to Absolute Seconds)
     for i in range(len(feet_names)):
         # Invert the index so FR (idx 0) is at the top (y=3)
         y_level = 3 - i 
         contact_bools = contacts[start_step:end_step, i]
         
         # Find the start and end indices of continuous contact segments
-        # Padding with False ensures we catch segments that start at 0 or touch the end
         padded = np.pad(contact_bools, (1, 1), mode='constant', constant_values=False)
         diffs = np.diff(padded.astype(int))
         
         starts = np.where(diffs == 1)[0]
         ends = np.where(diffs == -1)[0]
         
-        # Create a list of (start_x, width) tuples
-        xranges =[(start, end - start) for start, end in zip(starts, ends)]
+        # Convert indices to absolute time in seconds (t_abs = (idx + start_step) / 50 Hz)
+        xranges = [
+            ((start + start_step) / 50.0, (end - start) / 50.0) 
+            for start, end in zip(starts, ends)
+        ]
         
-        # Plot solid rectangles. (y_level - 0.2, 0.4) means the bar is centered 
-        # on y_level and has a thickness of 0.4.
+        # Plot solid rectangles
         ax.broken_barh(xranges, (y_level - 0.2, 0.4), facecolors='black', zorder=4)
 
-    # Get a distinct colormap for the policies
-    # Extract unique base domains (target domains) from the policy names
-    base_names = [name.split("_AdaptedFrom_")[0] for name in controller.pol_names]
-    unique_base_names = list(set(base_names))
-    cmap = cm.get_cmap('tab10', len(unique_base_names))
-    domain_colors = {domain: cmap(i) for i, domain in enumerate(unique_base_names)}
+    # --- UNIQUE COLOR FOR EACH DISTINCT POLICY ---
+    unique_policies = list(controller.pol_names)
+    cmap = cm.get_cmap('tab10_r' if len(unique_policies) <= 10 else 'tab20', len(unique_policies))
+    policy_colors = {pol: cmap(i) for i, pol in enumerate(unique_policies)}
     
     start_idx = 0
     recent_policy_history = controller.policy_history[start_step:end_step]
     current_pol = recent_policy_history[0]
     
+    # Plot background policy spans (Converted to Absolute Seconds)
     for t in range(1, len(recent_policy_history)):
-        # If the policy changed, or we reached the end of the simulation
         if recent_policy_history[t] != current_pol or t == len(recent_policy_history) - 1:
-            c = domain_colors[current_pol.split("_AdaptedFrom_")[0]]
-            # Paint the background for that duration
-            ax.axvspan(start_idx, t, facecolor=c, alpha=0.6)
+            c = policy_colors[current_pol]
+            
+            # Map indices to absolute time
+            start_sec = (start_idx + start_step) / 50.0
+            end_sec = (t + start_step) / 50.0
+            
+            ax.axvspan(start_sec, end_sec, facecolor=c, alpha=0.6)
             
             start_idx = t
             current_pol = recent_policy_history[t]
 
     i = controller.env_changes.index(env_change)
-    prev_env = 'None' if i == 0 else controller.env_changes[i-1][1]
-    ax.axvline(x=last_env_change - start_step, color='green', linestyle='--', linewidth=2, zorder=5)
-    # 3. Draw vertical line for drift detection
-    drifts = [idx-start_step for idx in controller.drift_indices if idx > start_step and idx < end_step]
-    for drift in drifts:
-        ax.axvline(x=drift, color='red', linestyle='--', linewidth=2, zorder=5)
+    prev_env = 'None' if i == 0 else controller.env_changes[i-1][1].replace("Go2Stroll", "")
+    env_name = env_name.replace("Go2Stroll", "")
+    
+    # Absolute time for physical domain change
+    ax.axvline(x=last_env_change / 50.0, color='green', linestyle='--', linewidth=2, zorder=5)
+    
+    # 3. Draw vertical lines for drift detection (Converted to Absolute Seconds)
+    active_drift_indices = [idx for idx in controller.drift_indices if start_step < idx < end_step]
+    for drift_idx in active_drift_indices:
+        drift_time = drift_idx / 50.0
+        ax.axvline(x=drift_time, color='red', linestyle='--', linewidth=2, zorder=5)
+        
+        # --- DRAW MICRO-ROLLOUT BARS ---
+        # 20 timesteps = 0.4 seconds per rollout
+        for m_idx in range(1, 6):
+            rollout_end_time = drift_time + m_idx * 0.4
+            end_step_time = end_step / 50.0
+            if rollout_end_time < end_step_time:
+                ax.axvline(x=rollout_end_time, color='black', linestyle=':', linewidth=2.5, zorder=5)
 
     # 4. Formatting
     ax.set_yticks([0, 1, 2, 3])
     ax.set_yticklabels(feet_names, fontweight='bold')
-    ax.set_xlabel("Time step (50Hz)", fontsize=12)
+    ax.set_xlabel("Absolute Time (Seconds)", fontsize=12)
     ax.set_title(f"Gait Contact Pattern During Online Adaptation: {prev_env} -> {env_name}", fontsize=14)
     
-    # Create a clean legend for the background colors
+    # Enforce strict x-limits so there are no empty white gaps at the ends
+    ax.set_xlim(start_step / 50.0, end_step / 50.0)
+    
+    # --- LATEX FORMATTER FOR THESIS NOMENCLATURE ---
+    def format_thesis_label(raw_name):
+        def clean_part(part):
+            part_lower = part.lower()
+            if "flat" in part_lower:
+                return "flat"
+            elif "rough" in part_lower:
+                return "rough"
+            elif "slippery" in part_lower:
+                return "slippery"
+            elif "blocked" in part_lower or "broken" in part_lower or "knee" in part_lower:
+                return "blocked"
+            return part
+
+        if "_AdaptedFrom_" in raw_name:
+            parts = raw_name.split("_AdaptedFrom_")
+            target = clean_part(parts[0])
+            original = clean_part(parts[1])
+            return f"$\\pi_{{{target}, {original}}}$"
+        else:
+            target = clean_part(raw_name)
+            return f"$\\pi_{{{target}}}$"
+
+    # Create a clean legend for the background colors with LaTeX formatting
     recent_pols = list(set(recent_policy_history))
-    legend_elements =[Patch(facecolor=domain_colors[pol.split("_AdaptedFrom_")[0]], alpha=0.6, label=pol) for pol in recent_pols]
+    legend_elements = [
+        Patch(facecolor=policy_colors[pol], alpha=0.6, label=format_thesis_label(pol)) 
+        for pol in recent_pols
+    ]
     
-    # Add a red dashed line to the legend for the drift detector
+    # Add status lines to the legend
     legend_elements.append(Line2D([0], [0], color='red', linestyle='--', linewidth=2, label='Drift Detected'))
-    legend_elements.append(Line2D([0], [0], color='green', linestyle='--', linewidth=2, label=f'Change: {prev_env} -> {env_name}'))
+    legend_elements.append(Line2D([0], [0], color='black', linestyle=':', linewidth=2.5, label='Micro-rollout End'))
+    legend_elements.append(Line2D([0], [0], color='green', linestyle='--', linewidth=2, label=f'Domain Change'))
     
-    # Place legend outside the plot so it doesn't cover the gait bars
-    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.01, 1), title="Legend")
+    # Place legend outside the plot with enlarged font properties
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.01, 1), 
+              title="Legend", title_fontsize=13, fontsize=12)
 
     plt.tight_layout()
     plt.show()
@@ -444,11 +541,17 @@ def plotGPSearch(controller, gp_states=None):
     blank_line = Line2D([0], [0], color='w', label=' ')
 
     axes[0].legend(handles=domain_lines + [blank_line] + status_lines, 
-                   loc='upper left', bbox_to_anchor=(1.02, 1.05), fontsize=9, framealpha=0.9)
+                   loc='upper left', bbox_to_anchor=(1.02, 1.05), fontsize=12, framealpha=0.9)
 
     plt.show()
-
 def plotGPSearchHorizontal(controller, gp_states=None):
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+    import numpy as np
+    from matplotlib.lines import Line2D
+    import umap
+    import warnings
+
     # Get the sequence of iterations for the most recent drift
     if gp_states is None:
         gp_states = controller.gp_states[-1]
@@ -456,16 +559,15 @@ def plotGPSearchHorizontal(controller, gp_states=None):
     num_iterations = len(gp_states)
     
     # 1. Collapse the 4D embeddings to a fixed 1D axis using UMAP
-    # UMAP preserves both local clustering (redundant policies) AND global distances (domains)
     pol_names_list = list(controller.policy_embeddings.keys())
     emb_matrix = np.array([controller.policy_embeddings[name] for name in pol_names_list])
     
-    # n_neighbors dictates how much local vs global structure to preserve. 
-    # For a small catalog, a small number (e.g., 3 to 5) works perfectly.
     n_neighbors = min(5, len(pol_names_list) - 1)
     
-    reducer = umap.UMAP(n_components=1, n_neighbors=n_neighbors, min_dist=0.1, random_state=42)
-    coords_1d = reducer.fit_transform(emb_matrix).flatten()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        reducer = umap.UMAP(n_components=1, n_neighbors=n_neighbors, min_dist=0.1, random_state=42)
+        coords_1d = reducer.fit_transform(emb_matrix).flatten()
     
     x_coords = {name: coord for name, coord in zip(pol_names_list, coords_1d)}
     
@@ -474,9 +576,9 @@ def plotGPSearchHorizontal(controller, gp_states=None):
     unique_base_names = list(set(base_names))
     cmap = cm.get_cmap('tab10', len(unique_base_names))
     domain_colors = {domain: cmap(i) for i, domain in enumerate(unique_base_names)}
-    present_names =[]
+    present_names = []
     
-    # --- CHANGED: 1 Row, N Columns. Added sharey=True to lock the Y-axis scale ---
+    # Create a subplot grid: 1 Row, N Columns. 
     fig, axes = plt.subplots(1, num_iterations, figsize=(3.0 * num_iterations, 5.5), 
                              sharex=True, sharey=True, 
                              gridspec_kw={'wspace': 0.05}, 
@@ -484,6 +586,29 @@ def plotGPSearchHorizontal(controller, gp_states=None):
     
     if num_iterations == 1: axes = [axes]
     else: axes = axes.flatten()
+
+    # --- LATEX FORMATTER FOR THESIS NOMENCLATURE ---
+    def format_thesis_label(raw_name):
+        def clean_part(part):
+            part_lower = part.lower()
+            if "flat" in part_lower:
+                return "flat"
+            elif "rough" in part_lower:
+                return "rough"
+            elif "slippery" in part_lower:
+                return "slippery"
+            elif "blocked" in part_lower or "broken" in part_lower or "knee" in part_lower:
+                return "blocked"
+            return part
+
+        if "_AdaptedFrom_" in raw_name:
+            parts = raw_name.split("_AdaptedFrom_")
+            target = clean_part(parts[0])
+            original = clean_part(parts[1])
+            return f"$\\pi_{{{target}, {original}}}$"
+        else:
+            target = clean_part(raw_name)
+            return f"$\\pi_{{{target}}}$"
 
     for ax_idx, (iteration, base_policy_name, chosen_policy_name, polInfo) in enumerate(gp_states):
         ax = axes[ax_idx]
@@ -495,33 +620,33 @@ def plotGPSearchHorizontal(controller, gp_states=None):
         for pol_name in pol_names_list:
             x_val = x_coords[pol_name]
             
-            # Find the belief stored in this specific iteration's polInfo
             gp_data = [(m, s) for _, m, s, name in polInfo if pol_name == name]
             if len(gp_data) == 0:
                 continue
             
             mean, std = gp_data[0]
-            
-            xs.append(float(x_val))
-            means.append(float(mean[0]))
-            stds.append(float(std[0]))
-            names.append(pol_name)
-            
-            # Color based on Target Domain
             base_domain = pol_name.split("_AdaptedFrom_")[0]
             present_names.append(base_domain)
-            colors.append(domain_colors[base_domain])
             
-            # Shape/Border based on GP Status
-            if pol_name == base_policy_name:
-                markers.append('D') # Diamond
-                mecs.append('black'); mews.append(2.5); sizes.append(100); zorders.append(5)
+            # --- SHAPE/BORDER/OVERLAY LOGIC ---
+            # If the base policy is also the chosen one, add both markers on top of each other!
+            if pol_name == base_policy_name and pol_name == chosen_policy_name:
+                # Add Diamond (Sampled Policy)
+                xs.append(float(x_val)); means.append(float(mean[0])); stds.append(float(std[0])); names.append(pol_name); colors.append(domain_colors[base_domain])
+                markers.append('D'); mecs.append('black'); mews.append(2.5); sizes.append(100); zorders.append(5)
+                
+                # Add Star (Chosen Policy)
+                xs.append(float(x_val)); means.append(float(mean[0])); stds.append(float(std[0])); names.append(pol_name); colors.append(domain_colors[base_domain])
+                markers.append('*'); mecs.append('red'); mews.append(2.0); sizes.append(300); zorders.append(6)
+            elif pol_name == base_policy_name:
+                xs.append(float(x_val)); means.append(float(mean[0])); stds.append(float(std[0])); names.append(pol_name); colors.append(domain_colors[base_domain])
+                markers.append('D'); mecs.append('black'); mews.append(2.5); sizes.append(100); zorders.append(5)
             elif pol_name == chosen_policy_name:
-                markers.append('*') # Star
-                mecs.append('red'); mews.append(2.0); sizes.append(300); zorders.append(6)
+                xs.append(float(x_val)); means.append(float(mean[0])); stds.append(float(std[0])); names.append(pol_name); colors.append(domain_colors[base_domain])
+                markers.append('*'); mecs.append('red'); mews.append(2.0); sizes.append(300); zorders.append(6)
             else:
-                markers.append('o') # Circle
-                mecs.append('gray'); mews.append(1.0); sizes.append(60); zorders.append(3)
+                xs.append(float(x_val)); means.append(float(mean[0])); stds.append(float(std[0])); names.append(pol_name); colors.append(domain_colors[base_domain])
+                markers.append('o'); mecs.append('gray'); mews.append(1.0); sizes.append(60); zorders.append(3)
 
         # Sort everything by the 1D X-coordinate
         sorted_indices = np.argsort(xs)
@@ -531,7 +656,7 @@ def plotGPSearchHorizontal(controller, gp_states=None):
         markers = [markers[i] for i in sorted_indices]
         mecs = [mecs[i] for i in sorted_indices]
         mews = [mews[i] for i in sorted_indices]
-        sizes =[sizes[i] for i in sorted_indices]
+        sizes = [sizes[i] for i in sorted_indices]
         zorders = [zorders[i] for i in sorted_indices]
 
         # 3. Plot the GP's uncertainty bound (Mean ± Std)
@@ -539,36 +664,37 @@ def plotGPSearchHorizontal(controller, gp_states=None):
         ax.fill_between(xs, means - stds, means + stds, color='blue', alpha=0.1, zorder=0)
 
         # Scatter the policies individually so we can apply specific markers
-        y_offset = 15
+        annotated_names = set()
         for i in range(len(xs)):
             ax.errorbar(xs[i], means[i], yerr=stds[i], fmt=markers[i], 
                         ecolor='gray', elinewidth=1.5, capsize=3, # Error bar style
                         markerfacecolor=colors[i], markeredgecolor=mecs[i], 
                         markeredgewidth=mews[i], markersize=np.sqrt(sizes[i]), zorder=zorders[i])
             
-            # Annotate only the Base and Chosen policies to prevent massive text overlap
-            if markers[i] in ['D', '*']:
+            # Annotate only the Base and Chosen policies once, preventing overlaps
+            if markers[i] in ['D', '*'] and names[i] not in annotated_names:
+                annotated_names.add(names[i])
                 
-                ax.annotate(names[i], (xs[i], means[i]), xytext=(0, y_offset), 
-                            textcoords='offset points', ha='center', fontsize=8, fontweight='bold',
+                # Stagger label heights cleanly based on unique annotation count
+                y_offset = 20 if len(annotated_names) % 2 == 0 else 45
+                
+                ax.annotate(format_thesis_label(names[i]), (xs[i], means[i]), xytext=(0, y_offset), 
+                            textcoords='offset points', ha='center', fontsize=16, fontweight='bold',
                             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=mecs[i], alpha=0.4), 
                             zorder=10, 
                             in_layout=False)
-                y_offset = 45
 
         # Formatting
         ax.set_title(f"Iteration {iteration}", fontsize=12, fontweight='bold')
         ax.grid(True, linestyle='--', alpha=0.3)
-        
-        # Add extra margins so annotations don't clip off the left/right sides
         ax.margins(x=0.15, y=0.2)
 
-    # --- CHANGED: Global X and Y axis labels ---
     fig.supxlabel("1D UMAP Projection of Latent Policy Space", fontsize=14)
     fig.supylabel("Predicted Error (GP Mean)", fontsize=14)
 
     # --- CUSTOM LEGENDS ---
-    domain_lines =[Line2D([0], [0], marker='o', color='w', markerfacecolor=domain_colors[d], 
+    # Keeps raw environment names in the colormap legend as requested
+    domain_lines = [Line2D([0], [0], marker='o', color='w', markerfacecolor=domain_colors[d], 
                            markersize=10, markeredgecolor='gray', label=d) for d in list(set(present_names))]
     
     status_lines = [
@@ -579,17 +705,12 @@ def plotGPSearchHorizontal(controller, gp_states=None):
     
     blank_line = Line2D([0], [0], color='w', label=' ')
 
-    # --- CHANGED: Attach the legend to the LAST subplot (axes[-1]) so it goes on the far right ---
     axes[-1].legend(handles=domain_lines + [blank_line] + status_lines, 
-                    loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=9, framealpha=0.9)
+                    loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=12, framealpha=0.9)
 
     plt.show()
     
 def statisticDriftHistory(controller, pre_steps=225):
-    import matplotlib.pyplot as plt
-    import numpy as np
-    from matplotlib.lines import Line2D
-
     stat_values = np.array(controller.detector.stat_values)
     p_values    = np.array(controller.detector.p_values)
     drift_indices = controller.drift_indices
@@ -669,6 +790,7 @@ def statisticDriftHistory(controller, pre_steps=225):
                 change_time = change_step / 50.0
                 # Draw on ax2 so it sits above the orange fill
                 ax2.axvline(change_time, color='green', linestyle=':', linewidth=2.5, zorder=4)
+                env_name = env_name.replace("Go2Stroll", "")
                 ax1.text(change_time - 0.05, 0.95, f" {env_name}",
                          color='green', rotation=90, va='top', ha='right',
                          fontsize=9, fontweight='bold', alpha=0.8,
@@ -695,7 +817,7 @@ def statisticDriftHistory(controller, pre_steps=225):
 
     # ── Global labels ──────────────────────────────────────────────────────────
     axes[0].set_ylabel("KS Statistic", fontsize=12, color='#1f77b4')
-    fig.supxlabel("Simulation Time (Seconds)", fontsize=12)
+    fig.supxlabel("Absolute Time (Seconds)", fontsize=12)
 
     # ── Legend (merge left + right axis handles from first subplot) ───────────
     h1, l1 = axes[0].get_legend_handles_labels()
@@ -708,5 +830,5 @@ def statisticDriftHistory(controller, pre_steps=225):
     if all_handles:
         axes[-1].legend(all_handles, all_labels,
                         loc='upper left', bbox_to_anchor=(1.12, 1.0),
-                        fontsize=10, framealpha=0.9)
+                        fontsize=12, framealpha=0.9)
     plt.show()
