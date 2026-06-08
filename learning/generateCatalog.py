@@ -5,6 +5,8 @@ from worldModel.common import MODELS_ROOT
 from visualize_adaptation import load_env, IMPL
 
 ALL_FROM_SCRATCH = False
+DO_TRAINING_TRIALS = True
+TRIAL_NUM = 20
 
 def main():
     '''
@@ -24,6 +26,28 @@ def main():
     
     all_envs = [flat_env, rough_env, slippery_env, env_blocked]
     pol_base_names = ["FlatTerrain", "RoughTerrain", "SlipperyTerrain", "BlockedKnee"]
+
+
+    if DO_TRAINING_TRIALS:
+        controller = OfflineRobotController(obs_shape, act_shape, initial_pair=None, 
+                                            generatePlots = False, cmd = jp.array([1., 0., 0.]))
+        for base_name, env in zip(pol_base_names, all_envs):
+            controller.env = env
+            
+            for iteration in range(TRIAL_NUM):
+                bname = base_name + '_' + str(iteration)
+                # When base_policy_name = None, we train from scratch
+                controller.adapt_policy(base_policy_name=None, key_name=bname, onlySaveMetrics=True)
+        
+
+        for base_name, env in zip(pol_base_names[1:], all_envs[1:]):
+            controller.env = env
+            
+            for iteration in range(TRIAL_NUM):
+                bname = base_name + '_' + str(iteration)
+                controller.adapt_policy(base_policy_name=pol_base_names[0], key_name=bname, onlySaveMetrics=True)
+        return
+    
     # Training from scratch
     for base_name, env in zip(pol_base_names, all_envs):
         controller = OfflineRobotController(obs_shape, act_shape, initial_pair=None, 

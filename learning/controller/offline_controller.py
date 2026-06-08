@@ -27,7 +27,7 @@ class OfflineRobotController(RobotController):
                  generatePlots = True, cmd = jp.array([1., 0., 0.])):
         RobotController.__init__(self, obs_shape, act_shape, initial_pair, jit_inference, generatePlots, cmd)
 
-    def adapt_policy(self, base_policy_name, key_name=None):
+    def adapt_policy(self, base_policy_name, key_name=None, onlySaveMetrics=False):
         basePath = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
         
         print("--- STARTING HEADLESS ADAPTATION FROM " + (base_policy_name if base_policy_name else "SCRATCH") + " ---")
@@ -120,6 +120,10 @@ class OfflineRobotController(RobotController):
             reward_mean=np.array(training_history['reward_mean']),
             reward_std=np.array(training_history['reward_std'])
         )
+
+        if onlySaveMetrics:
+            return
+        
         print(f"Saving adapted policy to: {new_ckpt_path}")
         # Ensure the target directory exists before saving
         os.makedirs(new_ckpt_path, exist_ok=True)
