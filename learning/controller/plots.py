@@ -17,33 +17,90 @@ import umap
 PLOT_DATA_DIR = "plotData"
 TRAIN_DATA_SUBDIR = "training"
 
-def transferLearningComparison(env_name, pol_name, base_pol_name):
+def plotTransferLearningAggregated(env_names, limit_evals=75, num_trials=20):
     plot_dir = os.path.join(PLOT_DATA_DIR, TRAIN_DATA_SUBDIR)
-    transfer_data = np.load(os.path.join(plot_dir, f"{pol_name}.npz"))
-    scratch_data = np.load(os.path.join(plot_dir, f"{base_pol_name}.npz"))
     
-    limit_evals = 75
-    steps = transfer_data['steps'][:limit_evals]
-    means = transfer_data['reward_mean'][:limit_evals]
-    stds = transfer_data['reward_std'][:limit_evals]
-    plt.figure(figsize=(8, 5))
-
-    # Plot Transfer Learning
-    plt.plot(steps, means, label="Fine-tuned from Flat", color='blue')
-    plt.fill_between(steps, means - stds, means + stds, alpha=0.2, color='blue')
-
-    # Plot From Scratch
-    steps = scratch_data['steps'][:limit_evals]
-    means = scratch_data['reward_mean'][:limit_evals]
-    stds = scratch_data['reward_std'][:limit_evals]
-    plt.plot(steps, means, label="Trained from Scratch", color='red')
-    plt.fill_between(steps, means - stds, means + stds, alpha=0.2, color='red')
-
-    plt.title(f"{env_name}: Transfer Learning vs. Training from Scratch")
-    plt.xlabel("Environment Steps")
-    plt.ylabel("Mean Episode Reward")
-    plt.legend()
-    plt.grid(True)
+    # Create subplots: 1 row, N columns
+    fig, axes = plt.subplots(1, len(env_names), figsize=(5.5 * len(env_names), 5), layout="constrained")
+    
+    if len(env_names) == 1:
+        axes = [axes]
+        
+    for ax, env_name in zip(axes, env_names):
+        scratch_matrix = np.zeros((0, limit_evals))
+        transfer_matrix = np.zeros((0, limit_evals))
+        
+        common_steps = None
+        
+        for i in range(num_trials):
+            scratch_file = os.path.join(plot_dir, f"{env_name}_{i}.npz")
+            if os.path.exists(scratch_file):
+                data = np.load(scratch_file)
+                steps = data['steps']
+                means = data['reward_mean']
+                
+                # Capture the X-axis steps (assuming all runs evaluate at the same intervals)
+                if common_steps is None and len(steps) >= limit_evals:
+                    common_steps = steps[:limit_evals]
+                
+                # Forward-fill if stopped early
+                length = min(len(means), limit_evals)
+                scratch_matrix = np.vstack([scratch_matrix, [means[:length]]])
+            else:
+                print(f"Warning: {scratch_file} not found.")
+                
+            transfer_file = os.path.join(plot_dir, f"{env_name}_{i}_AdaptedFrom_FlatTerrain.npz")
+            if os.path.exists(transfer_file):
+                data = np.load(transfer_file)
+                steps = data['steps']
+                means = data['reward_mean']
+                
+                if common_steps is None and len(steps) >= limit_evals:
+                    common_steps = steps[:limit_evals]
+                    
+                # Forward-fill if stopped early
+                length = min(len(means), limit_evals)
+                transfer_matrix = np.vstack([transfer_matrix, [means[:length]]])
+            else:
+                print(f"Warning: {transfer_file} not found.")
+        
+        # Fallback if no run reached limit_evals (assume 1M step intervals)
+        if common_steps is None:
+            common_steps = np.arange(limit_evals) * 1_000_000 
+            
+        # --- 3. Compute Aggregated Statistics ---
+        scratch_mean = np.mean(scratch_matrix, axis=0)
+        scratch_std = np.std(scratch_matrix, axis=0)
+        
+        transfer_mean = np.mean(transfer_matrix, axis=0)
+        transfer_std = np.std(transfer_matrix, axis=0)
+        
+        # --- 4. Plotting ---
+        # Transfer Learning (Blue)
+        ax.plot(common_steps, transfer_mean, label="Adapted from Flat", color='#1f77b4', linewidth=2.5)
+        ax.fill_between(common_steps, transfer_mean - transfer_std, transfer_mean + transfer_std, 
+                        alpha=0.25, color='#1f77b4', edgecolor='none')
+        
+        # From Scratch (Red)
+        ax.plot(common_steps, scratch_mean, label="Trained from Scratch", color='#d62728', linewidth=2.5)
+        ax.fill_between(common_steps, scratch_mean - scratch_std, scratch_mean + scratch_std, 
+                        alpha=0.25, color='#d62728', edgecolor='none')
+        
+        # Formatting
+        ax.set_title(f"{env_name}", fontsize=14, fontweight='bold')
+        ax.set_xlabel("Environment Steps", fontsize=12)
+        ax.grid(True, linestyle='--', alpha=0.5)
+        
+        # Scientific notation for X-axis (e.g., 2x10^7)
+        ax.ticklabel_format(style='sci', axis='x', scilimits=(0,0))
+        
+    # Global Formatting
+    axes[0].set_ylabel("Mean Episode Reward", fontsize=12)
+    
+    # Place legend inside the first or last plot, or outside
+    axes[-1].legend(loc='lower right', fontsize=11, framealpha=0.9)
+    
+    
     plt.show()
 
 def policyEmbeddings2D(controller):
@@ -268,13 +325,8 @@ def wmErrorHistory(controller, env_change = None):
     plt.title("WM error history")
     plt.tight_layout()
     plt.show()
-def plotGaitPattern(controller, env_change = None):
-    import matplotlib.pyplot as plt
-    import matplotlib.cm as cm
-    from matplotlib.patches import Patch
-    from matplotlib.lines import Line2D
-    import numpy as np
 
+def plotGaitPattern(controller, env_change = None):
     if env_change is None:
         env_change = controller.env_changes[-1]
 
