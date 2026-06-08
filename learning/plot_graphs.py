@@ -25,9 +25,4 @@ for env_change in plotData.env_changes:
     plots.plotGaitPattern(plotData, env_change)
 plots.statisticDriftHistory(plotData)
 
-for pol_name in os.listdir(MODELS_ROOT):
-    if "AdaptedFrom" in pol_name:
-        env_name, base_pol_name = pol_name.split("_AdaptedFrom_")
-        plots.transferLearningComparison(env_name, pol_name, base_pol_name)
-
 plots.wmErrorHistory(plotData)
