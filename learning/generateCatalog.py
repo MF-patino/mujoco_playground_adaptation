@@ -5,7 +5,7 @@ from worldModel.common import MODELS_ROOT
 from visualize_adaptation import load_env, IMPL
 
 ALL_FROM_SCRATCH = False
-DO_TRAINING_TRIALS = True
+DO_TRAINING_TRIALS = False
 TRIAL_NUM = 20
 
 def main():

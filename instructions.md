@@ -4,7 +4,7 @@ This fork of Mujoco Playground provides a general framework for online adaptatio
 
 ## Instalation instructions
 
-* Clone this repository
+* Clone this repository and install it through the official instructions.
 * Create a Python virtual environment: source ~/.venv/bin/activate
     ```sh 
     source ~/.venv/bin/activate
@@ -17,89 +17,81 @@ This fork of Mujoco Playground provides a general framework for online adaptatio
     - Choose option 1
     - Close the terminal and open a new one, then execute: 
         ```sh 
-        pip install river
+        uv pip install river
         ```
+
+* Install scikit-learn and umap
+    ```sh 
+    uv pip install scikit-learn umap-learn
+    ```
+
+* Verify everything runs:
+    ```sh 
+    python learning/visualize_adaptation.py
+    ```
+
+* (Workaround) If there is a MuJoCo version mismatch, this may fix it:
+    ```sh 
+    uv pip install mujoc==3.7.0 mujoco-mjx==3.7.0
+    ```
 
 * (Optional) Install rscope:
     ```sh 
-    pip install rscope
+    uv pip install rscope
     ```
+
+## Folders
+
+### Policy-WM pairs (Catalog)
+
+The online adaptation process uses pairs of policies and their respective world models to track their performance, and these pairs can be found in the `model_pairs` directory. This repo ships with it the policies for the Simple Catalog discussed in the thesis report.
+
+If the online adaptation system finds an environment it does not recognize, it then automatically trains and generates a new policy-WM pair for it in this folder. These adapted pairs contain the keyword "AdaptedFrom" in their folder names.
+
+### Plot data for visualization
+
+The folder `plotData` holds all data files that were used to build the gait, GP search, policy embedding and drift detection plots in the thesis report paper. As for the subfolder `plotData/training`, it holds the results (mean episode rewards at each time step) from training each policy from scratch and with transfer learning 20 independent times. The contents of this folder are used to compute the statistical tests that prove transfer learning is more sample efficient that training from scratch.
+
+### Code developed for the project
+
+The folder `learning` holds many new scripts that are not shipped with the official MuJoCo Playground repo. Their usage is discussed in the following section.
+
+As for the subfolders, `learning/controller` holds the code for adaptation to new domains and concept drift detection (`learning/controller/ks_detector`), while `learning/worldModel` contains the code for World Model training (`learning/worldModel/train_world_model.py`) and some configurations and folder paths that all modules have in common (`learning/worldModel/common.py`), as well as the code to extract transitions to build a dataset with which to train WMs (`learning/worldModel/rollout_saver.py`).
+
+Finally, `mujoco_playground/_src/locomotion/go2/stroll.py` contains the reward function and code to train the movement policies for the Go2 robot. The environments used in this work were defined in the folder `mujoco_playground/_src/locomotion/go2/xmls`.
 
 ## Usage
 
 ### For deployment and visualization
 
-* For deploying the online policy-WM pair adaptation stack:
+* For deploying the online adaptation stack in simulation with continual learning:
     ```sh 
     python learning/visualize_adaptation.py
     ```
-* Visualizing plots: 
+
+    This will create a new file in the `plotData` folder, which holds all collected information that can then be visualized.
+
+* Visualizing plots (requires manually setting the file to visualize in the `PLOT_FILE` global variable): 
     ```sh 
     python learning/plot_graphs.py
     ```
-* Visualizing a policy in its native environment: 
-    ```sh 
-    python learning/train_jax_ppo.py --env_name [env_name] --play_only=True --load_checkpoint_path [checkpoint_path]
-    ```
 
-### For training world models offline
+### Generating the catalogs
 
-This script trains all world models (one for each environment) at the same time, using the offline datasets:
-
+All three catalogs evaluated in the thesis may be generated using the script launched as follows:
 ```sh 
-python learning/worldModel/train_world_model.py
+python learning/generateCatalog.py
 ```
 
-### For training policies
+However, first one must set the global variable `ALL_FROM_SCRATCH` to `True` to train the catalog trained from scratch, or alternatively to `False` in order to train the entire Redundant Catalog. As the Simple Catalog is a subset of the Redundant Catalog, one can simply remove the resulting redundant policies from the `model_pairs` directory after training, or stopping the training manually when the first four policies are generated (which are the Simple Catalog).
 
-The usage command differ in the case of using the library rscope to visualize training results or not.
+### Evaluation and statistical tests
 
-Commands without rscope:
-* Training a policy from scratch: 
-    ```sh 
-    python learning/train_jax_ppo.py --env_name [env_name] --run_evals=False
-    ```
+Once a catalog has been built, it is possible to compute the quantitative evaluation table for that catalog as follows: 
+```sh 
+python learning/evaluate_headless.py
+```
 
-* Training a policy from another one (for checkpointing or transfer learning): 
-    ```sh 
-    python learning/train_jax_ppo.py --env_name [env_name] --load_checkpoint_path [checkpoint_path]
-    ```
-
-Commands with rscope:
-* Training a policy from scratch: 
-    ```sh 
-    python learning/train_jax_ppo.py --env_name [env_name] --rscope_envs 16 --run_evals=False --deterministic_rscope=True
-    ```
-* Training a policy from another one (for checkpointing or transfer learning): 
-    ```sh 
-    python learning/train_jax_ppo.py --env_name [env_name] --rscope_envs 16 --run_evals=False --deterministic_rscope=True  --load_checkpoint_path [checkpoint_path]
-    ```
-
-* Visualizing intermediate training results with rscope: 
-    ```sh 
-    python -m rscope
-    ```
-
-## Policy-WM pairs
-
-The online adaptation process uses pairs of policies and their respective world models to track their performance. These pairs can be found in the `model_pairs` directory.
-
-If the online adaptation system finds an environment it does not recognize, it then automatically trains and generates a new policy-WM pair for it in this folder. These adapted pairs contain the keyword "AdaptedFrom" in their folder names.
-
-## Playground-trained policies (checkpoint paths)
-
-The `logs` folder contains policies trained using the Playground `learning/train_jax_ppo.py` tool. These policies were trained for testing purposes and can be used by the online adaptation system, or visualized using the aforementioned script.
-
-Policies trained from scratch:
-* Go2StrollFlatTerrain:
-```[path_to_playground]/logs/Go2StrollFlatTerrain-20260307-205501/checkpoints```
-
-* Go2StrollRoughTerrain:
-```[path_to_playground]/logs/Go2StrollRoughTerrain-20260301-122953/checkpoints```
-
-* Go2StrollSlipperyTerrain:
-```[path_to_playground]/logs/Go2StrollSlipperyTerrain-20260217-133106/checkpoints```
-
-Policies trained from Go2StrollFlatTerrain:
-* Go2StrollRoughTerrain:
-```[path_to_playground]/logs/Go2StrollRoughTerrain-20260308-131625/checkpoints```
+It is also possible to run a statistical test to determine if the Simple Catalog is more sample efficient than the catalog trained from scratch. In order to do this, the `plotData/training` folder must be emptied and the `generateCatalog.py` has to be invoked with the global variable `DO_TRAINING_TRIALS` set to `True`. This will populate the folder, after which we can launch the following script which reads the contents of the folder to make the plot:
+```sh 
+python learning/stat_test.py
