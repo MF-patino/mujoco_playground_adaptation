@@ -299,30 +299,79 @@ def policyEmbeddings3D(controller):
     
     plt.show()
 
-def wmErrorHistory(controller, env_change = None):
+def wmErrorHistory(controller, env_change=None):
     if env_change is None:
         env_change = controller.env_changes[-1]
 
-    extra_steps = 250
+    extra_steps = 100
     last_env_change, env_name = env_change
     start_step = max(last_env_change - extra_steps, 0)
     end_step = last_env_change + extra_steps
 
+    # Get clean environment names
     i = controller.env_changes.index(env_change)
-    prev_env = 'None' if i == 0 else controller.env_changes[i-1][1]
+    prev_env = 'None' if i == 0 else controller.env_changes[i-1][1].replace("Go2Stroll", "")
+    env_name_clean = env_name.replace("Go2Stroll", "")
+
     fig, ax = plt.subplots(figsize=(14, 4))
-    ax.axvline(x=last_env_change - start_step, color='green', linestyle='--', linewidth=2, zorder=5)
+    
+    # Calculate Absolute Seconds for the X-axis
+    x_abs_seconds = np.arange(start_step, end_step) / 50.0
+    change_time = last_env_change / 50.0
+
+    # Plot the domain change vertical line
+    ax.axvline(x=change_time, color='green', linestyle='--', linewidth=2, zorder=5)
+
+    def format_wm_label(raw_name):
+        def clean_part(part):
+            part_lower = part.lower()
+            if "flat" in part_lower:
+                return "flat"
+            elif "rough" in part_lower:
+                return "rough"
+            elif "slippery" in part_lower:
+                return "slippery"
+            elif "blocked" in part_lower or "broken" in part_lower or "knee" in part_lower:
+                return "blocked"
+            return part
+
+        if "_AdaptedFrom_" in raw_name:
+            parts = raw_name.split("_AdaptedFrom_")
+            target = clean_part(parts[0])
+            original = clean_part(parts[1])
+            return f"$\\mathrm{{WM}}_{{{target}, {original}}}$"
+        else:
+            target = clean_part(raw_name)
+            return f"$\\mathrm{{WM}}_{{{target}}}$"
 
     legend_elements = []
-    for wm_name in controller.smooth_errors:
-        legend_elements.append(ax.plot(controller.smooth_errors[wm_name][start_step:end_step], label=f"{wm_name} WM errors")[0])
-
-    legend_elements.append(Line2D([0], [0], color='green', linestyle='--', linewidth=2, label=f'Change: {prev_env} -> {env_name}'))
     
-    # Place legend outside the plot
-    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.01, 1), title="Legend")
-    plt.xlabel("Time step")
-    plt.title("WM error history")
+    # Plot the WM errors
+    for wm_name in controller.smooth_errors:
+        latex_label = format_wm_label(wm_name) + " errors"
+        y_data = controller.smooth_errors[wm_name][start_step:end_step]
+        
+        # Ensure x and y shapes match perfectly
+        line = ax.plot(x_abs_seconds[:len(y_data)], y_data, label=latex_label, linewidth=1.5)[0]
+        legend_elements.append(line)
+
+    # Simplified Domain Change legend entry
+    legend_elements.append(Line2D([0], [0], color='green', linestyle='--', linewidth=2, label='Domain change'))
+    
+    # Formatting
+    ax.set_xlabel("Absolute Time (Seconds)", fontsize=12)
+    ax.set_ylabel("Reconstruction Error", fontsize=12)
+    ax.set_title(f"World Model Error History: {prev_env} $\\rightarrow$ {env_name_clean}", 
+                 fontsize=14, fontweight='bold')
+    
+    # Strict limits and grid
+    ax.set_xlim(start_step / 50.0, end_step / 50.0)
+    ax.grid(True, linestyle='--', alpha=0.4)
+
+    # Place legend outside the plot with larger fonts
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.01, 1), 
+              title="Legend", title_fontsize=13, fontsize=12, framealpha=0.9)
+              
     plt.tight_layout()
     plt.show()
 
@@ -333,7 +382,7 @@ def plotGaitPattern(controller, env_change = None):
     extra_steps = 250
     last_env_change, env_name = env_change
     start_step = max(last_env_change - 125, 0)
-    end_step = last_env_change + extra_steps + 125
+    end_step = last_env_change + extra_steps
 
     print("Generating Gait Pattern Plot...")
 

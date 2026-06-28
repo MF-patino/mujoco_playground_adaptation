@@ -103,6 +103,32 @@ class RobotController:
 
         # JIT compile the gradient descent logic
         self.fast_update = jax.jit(train_step)
+        self._warmup_jax(obs_shape, act_shape)
+
+    def _warmup_jax(self, obs_shape, act_shape):
+        print("Performing JAX Warmup for all policies and World Models...")
+
+        if isinstance(obs_shape, dict):
+            actor_obs_shape = obs_shape["state"]
+        else:
+            actor_obs_shape = obs_shape
+
+        dummy_obs = jp.zeros(actor_obs_shape, dtype=jp.float32)
+        dummy_act = jp.zeros(act_shape, dtype=jp.float32)
+        rng = jax.random.PRNGKey(0)
+
+        # Warm up all policies for single-step inference
+        for name, policy_fn in self.policies.items():
+            _ = policy_fn({"state": dummy_obs}, rng)
+
+        # Warm up all World Models for single-step prediction
+        for name, wm, stats in self.wms:
+            # Dynamically grab the correct WM state shape from its stats
+            dummy_wm_state = jp.zeros_like(stats['obs_mean'])
+            _ = self.getPredictionWM(wm, stats, dummy_wm_state, dummy_act)
+
+        dummy_obs.block_until_ready()
+        print("JAX Warmup complete.")
 
     def export_history(self, path, fell=False):
         data = {
