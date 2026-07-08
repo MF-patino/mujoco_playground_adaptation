@@ -1,128 +1,98 @@
-# MuJoCo Playground
+# Online policy adaptation with Mujoco Playground 
 
-[![Build](https://img.shields.io/github/actions/workflow/status/google-deepmind/mujoco_playground/ci.yml?branch=main)](https://github.com/google-deepmind/mujoco_playground/actions)
-[![PyPI version](https://img.shields.io/pypi/v/playground)](https://pypi.org/project/playground/)
-![Banner for playground](https://github.com/google-deepmind/mujoco_playground/blob/main/assets/banner.png?raw=true)
+This fork of Mujoco Playground provides a general framework for online adaptation of Go2 quadruped gaits in environments with changing terrain geometries and friction coefficients. The proposed solution bypasses catastrophic forgetting completely by building a repertoire that forever catalogs policies and also efficiently retrieves the best one for a given environment.
 
-A comprehensive suite of GPU-accelerated environments for robot learning research and sim-to-real, built with [MuJoCo MJX](https://github.com/google-deepmind/mujoco/tree/main/mjx).
+## Instalation instructions
 
-Features include:
+* Clone this repository and install it through the [official instructions](original_readme.md). You may also visit the [official MuJoCo Playground repository](https://github.com/google-deepmind/mujoco_playground), as this repository is a fork that will gradually become outdated.
+* Create a Python virtual environment:
+    ```sh 
+    python -m venv ~/.venv/
+    source ~/.venv/bin/activate
+    ```
+* Install the river online learning library: 
+    - Install Rust: 
+        ```sh 
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+        ```
+    - Choose option 1
+    - Close the terminal and open a new one, then execute: 
+        ```sh 
+        uv pip install river
+        ```
 
-- Classic control environments from `dm_control`.
-- Quadruped and bipedal locomotion environments.
-- Non-prehensile and dexterous manipulation environments.
-- Vision-based support available via [Madrona-MJX](https://github.com/shacklettbp/madrona_mjx).
+* Install scikit-learn and umap
+    ```sh 
+    uv pip install scikit-learn umap-learn
+    ```
 
-For more details, check out the project [website](https://playground.mujoco.org/).
+* Verify everything runs:
+    ```sh 
+    python learning/visualize_adaptation.py
+    ```
 
-> [!NOTE]
-> We now support training with both the MuJoCo MJX JAX implementation, as well as the [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp) implementation at HEAD. See MuJoCo 3.3.5 [release notes](https://mujoco.readthedocs.io/en/stable/changelog.html#version-3-3-5-august-8-2025) under `MJX` for more details.
+* (Workaround) If there is a MuJoCo version mismatch, this may fix it:
+    ```sh 
+    uv pip install mujoc==3.7.0 mujoco-mjx==3.7.0
+    ```
 
-## Installation
+* (Optional) Install rscope:
+    ```sh 
+    uv pip install rscope
+    ```
 
-You can install MuJoCo Playground directly from PyPI:
+## Folders
 
-```sh
-pip install playground
+### Policy-WM pairs (Catalog)
+
+The online adaptation process uses pairs of policies and their respective world models to track their performance, and these pairs can be found in the `model_pairs` directory. This repo ships with it the policies for the Simple Catalog discussed in the thesis report.
+
+If the online adaptation system finds an environment it does not recognize, it then automatically trains and generates a new policy-WM pair for it in this folder. These adapted pairs contain the keyword "AdaptedFrom" in their folder names.
+
+### Plot data for visualization
+
+The folder `plotData` holds all data files that were used to build the gait, GP search, policy embedding and drift detection plots in the thesis report paper. As for the subfolder `plotData/training`, it holds the results (mean episode rewards at each time step) from training each policy from scratch and with transfer learning 20 independent times. The contents of this folder are used to compute the statistical tests that prove transfer learning is more sample efficient that training from scratch.
+
+### Code developed for the project
+
+The folder `learning` holds many new scripts that are not shipped with the official MuJoCo Playground repo. Their usage is discussed in the following section.
+
+As for the subfolders, `learning/controller` holds the code for adaptation to new domains and concept drift detection (`learning/controller/ks_detector`), while `learning/worldModel` contains the code for World Model training (`learning/worldModel/train_world_model.py`) and some configurations and folder paths that all modules have in common (`learning/worldModel/common.py`), as well as the code to extract transitions to build a dataset with which to train WMs (`learning/worldModel/rollout_saver.py`).
+
+Finally, `mujoco_playground/_src/locomotion/go2/stroll.py` contains the reward function and code to train the movement policies for the Go2 robot. The environments used in this work were defined in the folder `mujoco_playground/_src/locomotion/go2/xmls`.
+
+## Usage
+
+### For deployment and visualization
+
+* For deploying the online adaptation stack in simulation with continual learning:
+    ```sh 
+    python learning/visualize_adaptation.py
+    ```
+
+    This will create a new file in the `plotData` folder, which holds all collected information that can then be visualized.
+
+* Visualizing plots (requires manually setting the file to visualize in the `PLOT_FILE` global variable): 
+    ```sh 
+    python learning/plot_graphs.py
+    ```
+
+### Generating the catalogs
+
+All three catalogs evaluated in the thesis may be generated using the script launched as follows:
+```sh 
+python learning/generateCatalog.py
 ```
 
-> [!WARNING]
-> The `playground` release may depend on pre-release versions of `mujoco` and
-> `warp-lang`, in which case you can try `pip install playground
-> --extra-index-url=https://py.mujoco.org
-> --extra-index-url=https://pypi.nvidia.com/warp-lang/`.
-> If there are still version mismatches, please open a github issue, and install
-> from source.
+However, first one must set the global variable `ALL_FROM_SCRATCH` to `True` to train the catalog trained from scratch, or alternatively to `False` in order to train the entire Redundant Catalog. As the Simple Catalog is a subset of the Redundant Catalog, one can simply remove the resulting redundant policies from the `model_pairs` directory after training, or stopping the training manually when the first four policies are generated (which are the Simple Catalog).
 
-### From Source
+### Evaluation and statistical tests
 
-> [!IMPORTANT]
-> Requires Python 3.10 or later.
-
-1. `git clone git@github.com:google-deepmind/mujoco_playground.git && cd mujoco_playground`
-2. [Install uv](https://docs.astral.sh/uv/getting-started/installation/), a faster alternative to `pip`
-3. Create a virtual environment: `uv venv --python 3.11`
-4. Activate it: `source .venv/bin/activate`
-5. Install CUDA 12 jax: `uv pip install -U "jax[cuda12]"`
-    * Verify GPU backend: `python -c "import jax; print(jax.default_backend())"` should print gpu
-6. Install playground: `uv pip install -e ".[all]"`
-7. Verify installation (and download Menagerie): `python -c "import mujoco_playground"`
-
-#### Madrona-MJX (optional)
-
-For vision-based environments, please refer to the installation instructions in the [Madrona-MJX](https://github.com/shacklettbp/madrona_mjx?tab=readme-ov-file#installation) repository.
-
-## Getting started
-
-### Basic Tutorials
-| Colab | Description |
-|-------|-------------|
-| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-deepmind/mujoco_playground/blob/main/learning/notebooks/dm_control_suite.ipynb) | Introduction to the Playground with DM Control Suite |
-| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-deepmind/mujoco_playground/blob/main/learning/notebooks/locomotion.ipynb) | Locomotion Environments |
-| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-deepmind/mujoco_playground/blob/main/learning/notebooks/manipulation.ipynb) | Manipulation Environments |
-
-### Vision-Based Tutorials (GPU Colab)
-| Colab | Description |
-|-------|-------------|
-| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-deepmind/mujoco_playground/blob/main/learning/notebooks/training_vision_1_t4.ipynb) | Training CartPole from Vision (T4 Instance) |
-
-### Local Runtime Tutorials
-*Requires local Madrona-MJX installation*
-
-| Colab | Description |
-|-------|-------------|
-| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-deepmind/mujoco_playground/blob/main/learning/notebooks/training_vision_1.ipynb) | Training CartPole from Vision |
-| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google-deepmind/mujoco_playground/blob/main/learning/notebooks/training_vision_2.ipynb) | Robotic Manipulation from Vision |
-
-## Running from CLI
-> [!IMPORTANT]
-> Assumes installation from source.
-
-For basic usage, navigate to the repo's directory and run:
-```bash
-python learning/train_jax_ppo.py --env_name CartpoleBalance
+Once a catalog has been built, it is possible to compute the quantitative evaluation table for that catalog as follows: 
+```sh 
+python learning/evaluate_headless.py
 ```
 
-### Training Visualization
-
-To interactively view trajectories throughout training with [rscope](https://github.com/Andrew-Luo1/rscope/tree/main), install it (`pip install rscope`) and run:
-
-```
-python learning/train_jax_ppo.py --env_name PandaPickCube --rscope_envs 16 --run_evals=False --deterministic_rscope=True
-# In a separate terminal
-python -m rscope
-```
-
-## FAQ
-
-### How can I contribute?
-
-Get started by installing the library and exploring its features! Found a bug? Report it in the issue tracker. Interested in contributing? If you are a developer with robotics experience, we would love your help—check out the [contribution guidelines](CONTRIBUTING.md) for more details.
-
-### Reproducibility / GPU Precision Issues
-
-Users with NVIDIA Ampere architecture GPUs (e.g., RTX 30 and 40 series) may experience reproducibility [issues](https://github.com/google-deepmind/mujoco_playground/issues/86) in mujoco_playground due to JAX’s default use of TF32 for matrix multiplications. This lower precision can adversely affect RL training stability. To ensure consistent behavior with systems using full float32 precision (as on Turing GPUs), please run `export JAX_DEFAULT_MATMUL_PRECISION=highest` in your terminal before starting your experiments (or add it to the end of `~/.bashrc`).
-
-To reproduce results using the same exact learning script as used in the paper, run the brax training script which is available [here](https://github.com/google/brax/blob/1ed3be220c9fdc9ef17c5cf80b1fa6ddc4fb34fa/brax/training/learner.py#L1). There are slight differences in results when using the `learning/train_jax_ppo.py` script, see the issue [here](https://github.com/google-deepmind/mujoco_playground/issues/171) for more context.
-
-## Citation
-
-If you use Playground in your scientific works, please cite it as follows:
-
-```bibtex
-@misc{mujoco_playground_2025,
-  title = {MuJoCo Playground: An open-source framework for GPU-accelerated robot learning and sim-to-real transfer.},
-  author = {Zakka, Kevin and Tabanpour, Baruch and Liao, Qiayuan and Haiderbhai, Mustafa and Holt, Samuel and Luo, Jing Yuan and Allshire, Arthur and Frey, Erik and Sreenath, Koushil and Kahrs, Lueder A. and Sferrazza, Carlo and Tassa, Yuval and Abbeel, Pieter},
-  year = {2025},
-  publisher = {GitHub},
-  url = {https://github.com/google-deepmind/mujoco_playground}
-}
-```
-
-## License and Disclaimer
-
-The texture used in the rough terrain for the locomotion environments is from [Polyhaven](https://polyhaven.com/a/rock_face) and licensed under [CC0](https://creativecommons.org/public-domain/cc0/).
-
-All other content in this repository is licensed under the Apache License, Version 2.0. A copy of this license is provided in the top-level [LICENSE](LICENSE) file in this repository. You can also obtain it from https://www.apache.org/licenses/LICENSE-2.0.
-
-This is not an officially supported Google product.
+It is also possible to run a statistical test to determine if the Simple Catalog is more sample efficient than the catalog trained from scratch. In order to do this, the `plotData/training` folder must be emptied and the `generateCatalog.py` has to be invoked with the global variable `DO_TRAINING_TRIALS` set to `True`. This will populate the folder, after which we can launch the following script which reads the contents of the folder to make the plot:
+```sh 
+python learning/stat_test.py

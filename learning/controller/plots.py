@@ -294,7 +294,7 @@ def policyEmbeddings3D(controller):
     
     # Renderizamos la leyenda en el lateral derecho de la figura con el tamaño de letra correcto
     ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.05, 1), 
-              title="Policies", title_fontsize=13, fontsize=12, framealpha=0.9)
+              title="Policies", title_fontsize=16, fontsize=16, framealpha=0.9)
     plt.tight_layout()
     
     plt.show()
@@ -811,9 +811,29 @@ def plotGPSearchHorizontal(controller, gp_states=None):
 
     plt.show()
     
-def statisticDriftHistory(controller, pre_steps=225):
-    stat_values = np.array(controller.detector.stat_values)
-    p_values    = np.array(controller.detector.p_values)
+def statisticDriftHistory(controller, pre_steps=50):
+    stat_values = np.array(controller.detector.stat_values, dtype=float)
+    stat_values[stat_values == 0] = np.nan
+    raw_p = controller.detector.p_values
+
+    # Create a mask to track when the detector was actively recording p-values
+    is_active = np.ones(len(stat_values), dtype=bool)
+
+    # Calculate the exact length of the GP search phase (e.g., 5 * 20 = 100)
+    sampling_len = getattr(controller, 'max_iterations', 5) * getattr(controller, 'increment_samples', 20)
+
+    # Mask out the micro-rollouts (they happen immediately after each drift trigger)
+    for drift_idx in controller.drift_indices:
+        is_active[drift_idx + 1 : drift_idx + 1 + sampling_len] = False
+
+    # Any remaining difference in length is the startup grace period at the very beginning
+    num_active = np.sum(is_active)
+    if num_active > len(raw_p):
+        is_active[:(num_active - len(raw_p))] = False
+
+    # Fill the p_values array with np.nan where GP searches were taking place
+    p_values = np.full(len(stat_values), np.nan)
+    p_values[is_active] = raw_p[:np.sum(is_active)]
     drift_indices = controller.drift_indices
     num_drifts = len(drift_indices)
 
@@ -874,7 +894,7 @@ def statisticDriftHistory(controller, pre_steps=225):
         ax2.fill_between(x_abs, y_p, P_VALUE_THRESHOLD,
                          where=(y_p < P_VALUE_THRESHOLD),
                          color='#ff7f0e', alpha=0.25, interpolate=True)
-        ax2.semilogy(x_abs, y_p, color='#ff7f0e', linewidth=1.5, alpha=0.85,
+        ax2.semilogy(x_abs, y_p, color='#ff7f0e', linewidth=2.5, alpha=0.85,
                      label='p-value' if i == 0 else "")
         ax2.axhline(P_VALUE_THRESHOLD, color='#ff7f0e', linestyle=':',
                     linewidth=1.5, alpha=0.9,
@@ -901,7 +921,7 @@ def statisticDriftHistory(controller, pre_steps=225):
         # FIX 2: draw red line on ax2 (the top layer) so the orange fill can't bury it
         drift_time = drift_idx / 50.0
         ax2.axvline(drift_time, color='red', linestyle='--', linewidth=2.5, zorder=5,
-                    label='Drift Triggered' if i == 0 else "")
+                    label='Alert Triggered' if i == 0 else "")
 
         # ── Formatting ─────────────────────────────────────────────────────────
         ax1.set_title(f"Drift Event {i+1} (t = {drift_time:.2f}s)",
